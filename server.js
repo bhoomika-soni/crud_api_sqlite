@@ -1,288 +1,196 @@
 const express = require("express");
-const swaggerUi = require("swagger-ui-express");
-const swaggerJsdoc = require("swagger-jsdoc");
+const sqlite3 = require("sqlite3").verbose();
+const path = require("path");
 
 const app = express();
 const PORT = 3000;
 
-// Middleware to read JSON request bodies
 app.use(express.json());
 
-// Temporary in-memory storage
-let tasks = [];
-let nextId = 1;
-
-// Swagger configuration
-const swaggerOptions = {
-  definition: {
-    openapi: "3.0.0",
-    info: {
-      title: "To-Do CRUD API",
-      version: "1.0.0",
-      description: "API for managing to-do tasks",
-    },
-    servers: [
-      {
-        url: `http://localhost:${PORT}`,
-      },
-    ],
-  },
-  apis: ["./server.js"],
-};
-
-const swaggerSpec = swaggerJsdoc(swaggerOptions);
-
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-// Home route
-app.get("/", (req, res) => {
-  res.json({
-    message: "Welcome to the To-Do CRUD API",
-  });
-});
-
-/**
- * @swagger
- * components:
- *   schemas:
- *     Task:
- *       type: object
- *       required:
- *         - title
- *       properties:
- *         id:
- *           type: integer
- *           example: 1
- *         title:
- *           type: string
- *           example: Learn Node.js
- *         description:
- *           type: string
- *           example: Complete backend practice
- *         completed:
- *           type: boolean
- *           example: false
- */
-
-/**
- * @swagger
- * /tasks:
- *   post:
- *     summary: Create a new task
- *     tags: [Tasks]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - title
- *             properties:
- *               title:
- *                 type: string
- *               description:
- *                 type: string
- *     responses:
- *       201:
- *         description: Task created successfully
- */
-app.post("/tasks", (req, res) => {
-  const { title, description = "" } = req.body;
-
-  if (typeof title !== "string" || !title.trim()) {
-    return res.status(400).json({
-      message: "A non-empty title is required",
-    });
-  }
-
-  const task = {
-    id: nextId++,
-    title: title.trim(),
-    description,
-    completed: false,
-  };
-
-  tasks.push(task);
-
-  res.status(201).json({
-    message: "Task created successfully",
-    task,
-  });
-});
-
-/**
- * @swagger
- * /tasks:
- *   get:
- *     summary: Get all tasks
- *     tags: [Tasks]
- *     responses:
- *       200:
- *         description: List of tasks
- */
-app.get("/tasks", (req, res) => {
-  res.json(tasks);
-});
-
-/**
- * @swagger
- * /tasks/{id}:
- *   get:
- *     summary: Get a task by ID
- *     tags: [Tasks]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Task found
- *       404:
- *         description: Task not found
- */
-app.get("/tasks/:id", (req, res) => {
-  const id = Number(req.params.id);
-
-  const task = tasks.find((task) => task.id === id);
-
-  if (!task) {
-    return res.status(404).json({
-      message: "Task not found",
-    });
-  }
-
-  res.json(task);
-});
-
-/**
- * @swagger
- * /tasks/{id}:
- *   put:
- *     summary: Update a task
- *     tags: [Tasks]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               title:
- *                 type: string
- *               description:
- *                 type: string
- *               completed:
- *                 type: boolean
- *     responses:
- *       200:
- *         description: Task updated successfully
- *       404:
- *         description: Task not found
- */
-app.put("/tasks/:id", (req, res) => {
-  const id = Number(req.params.id);
-
-  const task = tasks.find((task) => task.id === id);
-
-  if (!task) {
-    return res.status(404).json({
-      message: "Task not found",
-    });
-  }
-
-  const { title, description, completed } = req.body;
-
-  if (title !== undefined) {
-    if (typeof title !== "string" || !title.trim()) {
-      return res.status(400).json({
-        message: "Title must be a non-empty string",
-      });
+// Connect to SQLite database
+const dbPath = path.join(__dirname, "tasks.db");
+const db = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+        console.error("Database connection failed:", err.message);
+    } else {
+        console.log("Connected to SQLite database.");
     }
-
-    task.title = title.trim();
-  }
-
-  if (description !== undefined) {
-    if (typeof description !== "string") {
-      return res.status(400).json({
-        message: "Description must be a string",
-      });
-    }
-
-    task.description = description;
-  }
-
-  if (completed !== undefined) {
-    if (typeof completed !== "boolean") {
-      return res.status(400).json({
-        message: "Completed must be a boolean",
-      });
-    }
-
-    task.completed = completed;
-  }
-
-  res.json({
-    message: "Task updated successfully",
-    task,
-  });
 });
 
-/**
- * @swagger
- * /tasks/{id}:
- *   delete:
- *     summary: Delete a task
- *     tags: [Tasks]
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Task deleted successfully
- *       404:
- *         description: Task not found
- */
-app.delete("/tasks/:id", (req, res) => {
-  const id = Number(req.params.id);
+// Create tasks table
+db.run(`
+    CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        completed INTEGER NOT NULL DEFAULT 0
+    )
+`, (err) => {
+    if (err) {
+        console.error("Error creating table:", err.message);
+    } else {
+        console.log("Tasks table is ready.");
+    }
+});
 
-  const index = tasks.findIndex((task) => task.id === id);
-
-  if (index === -1) {
-    return res.status(404).json({
-      message: "Task not found",
+// Helper function to execute INSERT, UPDATE and DELETE
+function run(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, function (err) {
+            if (err) {
+                reject(err);
+            } else {
+                resolve({
+                    lastID: this.lastID,
+                    changes: this.changes
+                });
+            }
+        });
     });
-  }
+}
 
-  const deletedTask = tasks.splice(index, 1)[0];
+// Helper function to retrieve multiple rows
+function all(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.all(sql, params, (err, rows) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(rows);
+            }
+        });
+    });
+}
 
-  res.json({
-    message: "Task deleted successfully",
-    task: deletedTask,
-  });
+// Helper function to retrieve one row
+function get(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(row);
+            }
+        });
+    });
+}
+
+// GET all tasks
+app.get("/tasks", async (req, res) => {
+    try {
+        const tasks = await all("SELECT * FROM tasks ORDER BY id");
+        res.json(tasks);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to retrieve tasks" });
+    }
 });
 
-// Handle unknown routes
-app.use((req, res) => {
-  res.status(404).json({
-    message: "Route not found",
-  });
+// GET a single task
+app.get("/tasks/:id", async (req, res) => {
+    try {
+        const task = await get(
+            "SELECT * FROM tasks WHERE id = ?",
+            [req.params.id]
+        );
+
+        if (!task) {
+            return res.status(404).json({ error: "Task not found" });
+        }
+
+        res.json(task);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to retrieve task" });
+    }
 });
 
-// Start the server
+// POST create a new task
+app.post("/tasks", async (req, res) => {
+    try {
+        const { title, completed = false } = req.body;
+
+        if (typeof title !== "string" || !title.trim()) {
+            return res.status(400).json({
+                error: "Title is required"
+            });
+        }
+
+        if (typeof completed !== "boolean") {
+            return res.status(400).json({
+                error: "Completed must be true or false"
+            });
+        }
+
+        const result = await run(
+            "INSERT INTO tasks (title, completed) VALUES (?, ?)",
+            [title.trim(), completed ? 1 : 0]
+        );
+
+        const task = await get(
+            "SELECT * FROM tasks WHERE id = ?",
+            [result.lastID]
+        );
+
+        res.status(201).json(task);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to create task" });
+    }
+});
+
+// PUT update an existing task
+app.put("/tasks/:id", async (req, res) => {
+    try {
+        const { title, completed } = req.body;
+
+        if (
+            typeof title !== "string" ||
+            !title.trim() ||
+            typeof completed !== "boolean"
+        ) {
+            return res.status(400).json({
+                error: "A valid title and completed boolean are required"
+            });
+        }
+
+        const result = await run(
+            `UPDATE tasks
+             SET title = ?, completed = ?
+             WHERE id = ?`,
+            [title.trim(), completed ? 1 : 0, req.params.id]
+        );
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: "Task not found" });
+        }
+
+        const task = await get(
+            "SELECT * FROM tasks WHERE id = ?",
+            [req.params.id]
+        );
+
+        res.json(task);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to update task" });
+    }
+});
+
+// DELETE a task
+app.delete("/tasks/:id", async (req, res) => {
+    try {
+        const result = await run(
+            "DELETE FROM tasks WHERE id = ?",
+            [req.params.id]
+        );
+
+        if (result.changes === 0) {
+            return res.status(404).json({ error: "Task not found" });
+        }
+
+        res.json({ message: "Task deleted successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to delete task" });
+    }
+});
+
+// Start server
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-  console.log(`Swagger UI at http://localhost:${PORT}/api-docs`);
+    console.log(`Server running at http://localhost:${PORT}`);
 });
